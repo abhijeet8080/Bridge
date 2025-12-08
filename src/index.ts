@@ -8,6 +8,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(bodyParser.json());
+app.use(bodyParser.text({ type: "text/plain" }));
 
 // --- Debounce map to hold pending timers per record ---
 const pendingEvents = new Map<string, NodeJS.Timeout>();
@@ -51,6 +52,64 @@ app.post("/webhook", async (req, res) => {
     res.status(202).json({ status: "accepted", info: "Debounced" });
   } catch (err) {
     console.error("❌ Failed to handle webhook:", err);
+    res.status(500).json({ error: "Failed to handle webhook" });
+  }
+});
+
+// Microsoft Graph webhook endpoint for email notifications
+// GET endpoint for subscription validation
+app.get("/graph/webhook", (req, res) => {
+  const validationToken = req.query.validationToken as string;
+  
+  if (validationToken) {
+    // Microsoft Graph requires returning the validation token as plain text
+    console.log("✅ Microsoft Graph subscription validation received");
+    res.status(200).set("Content-Type", "text/plain").send(validationToken);
+  } else {
+    res.status(400).json({ error: "Missing validationToken" });
+  }
+});
+
+// POST endpoint for receiving email notifications from Microsoft Graph
+app.post("/graph/webhook", async (req, res) => {
+  try {
+    const notifications = req.body;
+    
+    // Microsoft Graph sends notifications in this format:
+    // { value: [{ subscriptionId, changeType, resource, resourceData, ... }] }
+    if (!notifications?.value || !Array.isArray(notifications.value)) {
+      console.warn("⚠️ Invalid Microsoft Graph notification format:", notifications);
+      return res.status(400).json({ error: "Invalid notification format" });
+    }
+
+    // Process each notification
+    for (const notification of notifications.value) {
+      const { subscriptionId, changeType, resource, resourceData } = notification;
+      
+      console.log("📧 Microsoft Graph notification received:", {
+        subscriptionId,
+        changeType,
+        resource,
+        resourceData,
+        timestamp: new Date().toISOString(),
+      });
+      
+      // Only process email-related notifications
+      if (changeType === "created" && resource?.includes("/messages")) {
+        console.log(`✅ Email notification detected for subscription: ${subscriptionId}`);
+        console.log("📨 Email resource:", resource);
+        if (resourceData) {
+          console.log("📋 Email resource data:", JSON.stringify(resourceData, null, 2));
+        }
+      } else {
+        console.log(`ℹ️ Skipping notification - changeType: ${changeType}, resource: ${resource}`);
+      }
+    }
+
+    // Microsoft Graph expects a 202 Accepted response
+    res.status(202).json({ status: "accepted" });
+  } catch (err) {
+    console.error("❌ Failed to handle Microsoft Graph webhook:", err);
     res.status(500).json({ error: "Failed to handle webhook" });
   }
 });
