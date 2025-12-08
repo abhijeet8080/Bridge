@@ -7,8 +7,10 @@ import { producer } from "./queue";
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// Handle both text/plain (for validation) and JSON (for notifications)
+// Microsoft Graph sends validation tokens as plain text
+app.use(bodyParser.text({ type: ["text/plain", "text"], limit: "1mb" }));
 app.use(bodyParser.json());
-app.use(bodyParser.text({ type: "text/plain" }));
 
 // --- Debounce map to hold pending timers per record ---
 const pendingEvents = new Map<string, NodeJS.Timeout>();
@@ -73,12 +75,52 @@ app.get("/graph/webhook", (req, res) => {
 // POST endpoint for receiving email notifications from Microsoft Graph
 app.post("/graph/webhook", async (req, res) => {
   try {
+    // Log incoming request details for debugging
+    console.log("📥 POST /graph/webhook received");
+    console.log("📋 Content-Type:", req.headers["content-type"]);
+    console.log("📋 Query params:", req.query);
+    console.log("📋 Body type:", typeof req.body);
+    console.log("📋 Body:", req.body);
+    
+    // Check for validationToken in query params first (common case)
+    const validationToken = req.query.validationToken as string;
+    if (validationToken) {
+      console.log("✅ Microsoft Graph subscription validation received (POST with query param)");
+      return res.status(200).set("Content-Type", "text/plain").send(validationToken);
+    }
+    
+    // Check if this is a validation request
+    // Microsoft Graph sends validationToken as plain text in POST body
+    // It might come as a string or might be undefined/empty if parsing failed
+    let bodyText: string | null = null;
+    if (typeof req.body === "string") {
+      bodyText = req.body;
+    } else if (req.body === undefined || req.body === null || req.body === "") {
+      // If body is empty/undefined, it might be a validation request that wasn't parsed
+      // Check if Content-Type suggests it's text
+      const contentType = req.headers["content-type"] || "";
+      if (contentType.includes("text/plain") || contentType === "") {
+        console.log("⚠️ Empty body but might be validation request - checking raw body");
+        // Try to read raw body if available
+        return res.status(400).json({ error: "Empty validation request body" });
+      }
+    }
+    
+    // Validation tokens are typically short alphanumeric strings (not JSON)
+    if (bodyText && bodyText.length > 0 && bodyText.length < 200 && !bodyText.trim().startsWith("{")) {
+      console.log("✅ Microsoft Graph subscription validation received (POST with body)");
+      console.log("🔑 Validation token:", bodyText);
+      return res.status(200).set("Content-Type", "text/plain").send(bodyText);
+    }
+    
     const notifications = req.body;
     
     // Microsoft Graph sends notifications in this format:
     // { value: [{ subscriptionId, changeType, resource, resourceData, ... }] }
     if (!notifications?.value || !Array.isArray(notifications.value)) {
       console.warn("⚠️ Invalid Microsoft Graph notification format:", notifications);
+      console.warn("⚠️ Request body type:", typeof req.body);
+      console.warn("⚠️ Request body:", req.body);
       return res.status(400).json({ error: "Invalid notification format" });
     }
 
