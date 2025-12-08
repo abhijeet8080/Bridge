@@ -75,86 +75,80 @@ app.get("/graph/webhook", (req, res) => {
 // POST endpoint for receiving email notifications from Microsoft Graph
 app.post("/graph/webhook", async (req, res) => {
   try {
-    // Log incoming request details for debugging
     console.log("📥 POST /graph/webhook received");
     console.log("📋 Content-Type:", req.headers["content-type"]);
-    console.log("📋 Query params:", req.query);
-    console.log("📋 Body type:", typeof req.body);
     console.log("📋 Body:", req.body);
-    
-    // Check for validationToken in query params first (common case)
+
+    // 1️⃣ Subscription validation handling
     const validationToken = req.query.validationToken as string;
     if (validationToken) {
-      console.log("✅ Microsoft Graph subscription validation received (POST with query param)");
+      console.log("🔑 Microsoft Graph subscription validation (query param)");
       return res.status(200).set("Content-Type", "text/plain").send(validationToken);
     }
-    
-    // Check if this is a validation request
-    // Microsoft Graph sends validationToken as plain text in POST body
-    // It might come as a string or might be undefined/empty if parsing failed
-    let bodyText: string | null = null;
-    if (typeof req.body === "string") {
-      bodyText = req.body;
-    } else if (req.body === undefined || req.body === null || req.body === "") {
-      // If body is empty/undefined, it might be a validation request that wasn't parsed
-      // Check if Content-Type suggests it's text
-      const contentType = req.headers["content-type"] || "";
-      if (contentType.includes("text/plain") || contentType === "") {
-        console.log("⚠️ Empty body but might be validation request - checking raw body");
-        // Try to read raw body if available
-        return res.status(400).json({ error: "Empty validation request body" });
-      }
+
+    // Body-as-text validation case
+    if (typeof req.body === "string" && req.body.length < 200 && !req.body.startsWith("{")) {
+      console.log("🔑 Microsoft Graph subscription validation (raw body)");
+      return res.status(200).set("Content-Type", "text/plain").send(req.body);
     }
-    
-    // Validation tokens are typically short alphanumeric strings (not JSON)
-    if (bodyText && bodyText.length > 0 && bodyText.length < 200 && !bodyText.trim().startsWith("{")) {
-      console.log("✅ Microsoft Graph subscription validation received (POST with body)");
-      console.log("🔑 Validation token:", bodyText);
-      return res.status(200).set("Content-Type", "text/plain").send(bodyText);
-    }
-    
-    const notifications = req.body;
-    
-    // Microsoft Graph sends notifications in this format:
-    // { value: [{ subscriptionId, changeType, resource, resourceData, ... }] }
-    if (!notifications?.value || !Array.isArray(notifications.value)) {
-      console.warn("⚠️ Invalid Microsoft Graph notification format:", notifications);
-      console.warn("⚠️ Request body type:", typeof req.body);
-      console.warn("⚠️ Request body:", req.body);
+
+    // 2️⃣ Validate Graph notification structure
+    const body = req.body;
+    if (!body?.value || !Array.isArray(body.value)) {
+      console.warn("⚠️ Invalid Graph notification format:", body);
       return res.status(400).json({ error: "Invalid notification format" });
     }
 
-    // Process each notification
-    for (const notification of notifications.value) {
+    // 3️⃣ Process notifications and enqueue jobs
+    for (const notification of body.value) {
       const { subscriptionId, changeType, resource, resourceData } = notification;
-      
-      console.log("📧 Microsoft Graph notification received:", {
+
+      console.log("📧 Graph notification:", {
         subscriptionId,
         changeType,
         resource,
         resourceData,
         timestamp: new Date().toISOString(),
       });
-      
-      // Only process email-related notifications
-      if (changeType === "created" && resource?.includes("/messages")) {
-        console.log(`✅ Email notification detected for subscription: ${subscriptionId}`);
-        console.log("📨 Email resource:", resource);
-        if (resourceData) {
-          console.log("📋 Email resource data:", JSON.stringify(resourceData, null, 2));
-        }
+
+      // Only trigger job when a new message is created
+      if (changeType === "created" && resource?.toLowerCase().includes("/messages/")) {
+        console.log("📨 Email detected — enqueuing job to process vendor reply");
+
+        await producer.add(
+          "process-email-reply",
+          {
+            model: "Email",
+            operation: "vendor_reply",
+            payload: {
+              messageId: resourceData?.id,
+              resource,
+              subscriptionId,
+            },
+          },
+          {
+            jobId: `email-${resourceData?.id}`, // prevents duplicates
+            removeOnComplete: true,
+            removeOnFail: false,
+          }
+        );
+
+        console.log(`🚀 Job enqueued → process-email-reply for message ${resourceData?.id}`);
       } else {
-        console.log(`ℹ️ Skipping notification - changeType: ${changeType}, resource: ${resource}`);
+        console.log(
+          `ℹ️ Ignored — changeType: ${changeType}, resource: ${resource}`
+        );
       }
     }
 
-    // Microsoft Graph expects a 202 Accepted response
+    // 4️⃣ Graph requires 202 Accepted
     res.status(202).json({ status: "accepted" });
   } catch (err) {
-    console.error("❌ Failed to handle Microsoft Graph webhook:", err);
-    res.status(500).json({ error: "Failed to handle webhook" });
+    console.error("❌ Failed to handle Graph webhook:", err);
+    res.status(500).json({ error: "Failed to handle graph webhook" });
   }
 });
+
 
 app.get("/health", async (_req, res) => {
   try {
