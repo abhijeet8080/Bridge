@@ -62,7 +62,7 @@ app.post("/webhook", async (req, res) => {
 // GET endpoint for subscription validation
 app.get("/graph/webhook", (req, res) => {
   const validationToken = req.query.validationToken as string;
-  
+
   if (validationToken) {
     // Microsoft Graph requires returning the validation token as plain text
     console.log("✅ Microsoft Graph subscription validation received");
@@ -83,11 +83,18 @@ app.post("/graph/webhook", async (req, res) => {
     const validationToken = req.query.validationToken as string;
     if (validationToken) {
       console.log("🔑 Microsoft Graph subscription validation (query param)");
-      return res.status(200).set("Content-Type", "text/plain").send(validationToken);
+      return res
+        .status(200)
+        .set("Content-Type", "text/plain")
+        .send(validationToken);
     }
 
     // Body-as-text validation case
-    if (typeof req.body === "string" && req.body.length < 200 && !req.body.startsWith("{")) {
+    if (
+      typeof req.body === "string" &&
+      req.body.length < 200 &&
+      !req.body.startsWith("{")
+    ) {
       console.log("🔑 Microsoft Graph subscription validation (raw body)");
       return res.status(200).set("Content-Type", "text/plain").send(req.body);
     }
@@ -101,7 +108,8 @@ app.post("/graph/webhook", async (req, res) => {
 
     // 3️⃣ Process notifications and enqueue jobs
     for (const notification of body.value) {
-      const { subscriptionId, changeType, resource, resourceData } = notification;
+      const { subscriptionId, changeType, resource, resourceData } =
+        notification;
 
       console.log("📧 Graph notification:", {
         subscriptionId,
@@ -112,11 +120,16 @@ app.post("/graph/webhook", async (req, res) => {
       });
 
       // Only trigger job when a new message is created
-      if (changeType === "created" && resource?.toLowerCase().includes("/messages/")) {
-        console.log("📨 Email detected — enqueuing job to process vendor reply");
+      if (
+        changeType === "created" &&
+        resource?.toLowerCase().includes("/messages/")
+      ) {
+        console.log(
+          "📨 Email detected — enqueuing job to process vendor reply"
+        );
 
         await producer.add(
-          "process-email-reply",
+          "email.vendor_reply",
           {
             model: "Email",
             operation: "vendor_reply",
@@ -133,7 +146,9 @@ app.post("/graph/webhook", async (req, res) => {
           }
         );
 
-        console.log(`🚀 Job enqueued → process-email-reply for message ${resourceData?.id}`);
+        console.log(
+          `🚀 Job enqueued → process-email-reply for message ${resourceData?.id}`
+        );
       } else {
         console.log(
           `ℹ️ Ignored — changeType: ${changeType}, resource: ${resource}`
@@ -148,7 +163,6 @@ app.post("/graph/webhook", async (req, res) => {
     res.status(500).json({ error: "Failed to handle graph webhook" });
   }
 });
-
 
 app.get("/health", async (_req, res) => {
   try {

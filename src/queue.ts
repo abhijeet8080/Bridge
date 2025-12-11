@@ -10,7 +10,7 @@ export const connection = new IORedis(redisUrl, {
   maxRetriesPerRequest: null,
 });
 
-export const queueName = process.env.QUEUE_NAME || "bc-events";
+export const queueName = process.env.PG_QUEUE_NAME || "pg-events";
 
 export const producer = new Queue(queueName, {
   connection,
