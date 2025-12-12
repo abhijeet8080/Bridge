@@ -58,6 +58,54 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
+
+
+app.post("/rfq-webhook", async (req, res) => {
+  try {
+    console.log("📥 RFQ Approval webhook received");
+    
+    const payload = req.body;
+
+    // Log the complete payload
+    console.log("📋 RFQ Approval Data:", JSON.stringify(payload, null, 2));
+
+    // Extract and log key fields
+    console.log("🔍 Key Information:", {
+      entryNo: payload.entryNo,
+      opportunityNo: payload.opportunityNo,
+      rfqNo: payload.rfqNo,
+      vendorNo: payload.vendorNo,
+      vendorDescription: payload.vendorDescription,
+      itemNo: payload.itemNo,
+      itemDescription: payload.itemDescription,
+      quantity: payload.quantity,
+      directUnitCost: payload.directUnitCost,
+      approved: payload.approved,
+      rejected: payload.rejected,
+      approvalStatus: payload.approved ? "✅ APPROVED" : payload.rejected ? "❌ REJECTED" : "⏳ PENDING",
+      documentDate: payload.documentDate,
+      expectedDeliveryDate: payload.expectedDeliveryDate,
+      vendorQuoteNo: payload.vendorQuoteNo,
+      createdBy: payload.createdBy,
+      rejectionReason: payload.rejectionReason,
+      modifiedAt: payload.systemModifiedAt,
+      modifiedBy: payload.systemModifiedBy,
+    });
+
+    // Optional: Enqueue job for further processing
+    // await producer.add("rfq-approval", payload);
+
+    res.status(200).json({ 
+      status: "success", 
+      message: "RFQ approval data received and logged" 
+    });
+  } catch (err) {
+    console.error("❌ Failed to handle RFQ webhook:", err);
+    res.status(500).json({ error: "Failed to handle RFQ webhook" });
+  }
+});
+
+
 // Microsoft Graph webhook endpoint for email notifications
 // GET endpoint for subscription validation
 app.get("/graph/webhook", (req, res) => {
