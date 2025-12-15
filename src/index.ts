@@ -60,50 +60,76 @@ app.post("/webhook", async (req, res) => {
 
 
 
-app.post("/rfq-webhook", async (req, res) => {
+app.post("/sales-quote-webhook", async (req, res) => {
   try {
-    console.log("📥 RFQ Approval webhook received");
-    
+    console.log("📥 Sales Quote webhook received");
+
     const payload = req.body;
 
-    // Log the complete payload
-    console.log("📋 RFQ Approval Data:", JSON.stringify(payload, null, 2));
+    // Log full payload for traceability
+    console.log("📋 Sales Quote Payload:", JSON.stringify(payload, null, 2));
 
-    // Extract and log key fields
-    console.log("🔍 Key Information:", {
-      entryNo: payload.entryNo,
+    // ---- Header-level data ----
+    const headerInfo = {
+      salesQuoteNo: payload.salesQuoteNo,
       opportunityNo: payload.opportunityNo,
-      rfqNo: payload.rfqNo,
-      vendorNo: payload.vendorNo,
-      vendorDescription: payload.vendorDescription,
-      itemNo: payload.itemNo,
-      itemDescription: payload.itemDescription,
-      quantity: payload.quantity,
-      directUnitCost: payload.directUnitCost,
-      approved: payload.approved,
-      rejected: payload.rejected,
-      approvalStatus: payload.approved ? "✅ APPROVED" : payload.rejected ? "❌ REJECTED" : "⏳ PENDING",
-      documentDate: payload.documentDate,
-      expectedDeliveryDate: payload.expectedDeliveryDate,
-      vendorQuoteNo: payload.vendorQuoteNo,
-      createdBy: payload.createdBy,
-      rejectionReason: payload.rejectionReason,
-      modifiedAt: payload.systemModifiedAt,
-      modifiedBy: payload.systemModifiedBy,
-    });
+      customerNo: payload.customerNo,
+      currency: payload.currency,
+      quoteDate: payload.quoteDate,
+      validUntil: payload.validUntil,
+      accountManager: payload.accountManager,
+    };
 
-    // Optional: Enqueue job for further processing
-    // await producer.add("rfq-approval", payload);
+    console.log("🧾 Sales Quote Header:", headerInfo);
 
-    res.status(200).json({ 
-      status: "success", 
-      message: "RFQ approval data received and logged" 
+    // ---- Line-level data ----
+    if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
+      console.warn("⚠️ Sales quote has no lines");
+    } else {
+      payload.lines.forEach((line: any) => {
+        console.log("📦 Sales Quote Line:", {
+          lineNo: line.lineNo,
+          itemNo: line.itemNo,
+          internalItemId: line.internalItemId,
+          description: line.description,
+          quantity: line.quantity,
+
+          // Cost & price
+          unitCost: line.unitCost,
+          unitPrice: line.unitPrice,
+
+          // Margin
+          profitPercent: line.profitPercent,
+          marginPercent: line.marginPercent,
+
+          // Traceability back to RFQ
+          purchaseQuoteNo: line.purchaseQuoteNo,
+          rfqApprovalEntryNo: line.rfqApprovalEntryNo,
+        });
+      });
+    }
+
+    // ---- Marketplace sync logic (example) ----
+    /*
+      await marketplaceService.upsertQuote({
+        header: headerInfo,
+        lines: payload.lines
+      });
+    */
+
+    res.status(200).json({
+      status: "success",
+      message: "Sales quote received and processed",
+      salesQuoteNo: payload.salesQuoteNo,
     });
   } catch (err) {
-    console.error("❌ Failed to handle RFQ webhook:", err);
-    res.status(500).json({ error: "Failed to handle RFQ webhook" });
+    console.error("❌ Failed to handle Sales Quote webhook:", err);
+    res.status(500).json({
+      error: "Failed to handle Sales Quote webhook",
+    });
   }
 });
+
 
 
 // Microsoft Graph webhook endpoint for email notifications
