@@ -68,7 +68,7 @@ app.post("/sales-quote-webhook", async (req, res) => {
 
     // Log full payload for traceability
     console.log("📋 Sales Quote Payload:", JSON.stringify(payload, null, 2));
-
+    console.log('complete payload',payload)
     // ---- Header-level data ----
     const headerInfo = {
       salesQuoteNo: payload.salesQuoteNo,
@@ -99,7 +99,6 @@ app.post("/sales-quote-webhook", async (req, res) => {
           unitPrice: line.unitPrice,
 
           // Margin
-          profitPercent: line.profitPercent,
           marginPercent: line.marginPercent,
 
           // Traceability back to RFQ
