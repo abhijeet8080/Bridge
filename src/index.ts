@@ -58,8 +58,6 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-
-
 app.post("/sales-quote-webhook", async (req, res) => {
   try {
     console.log("📥 Sales Quote webhook received");
@@ -68,16 +66,19 @@ app.post("/sales-quote-webhook", async (req, res) => {
 
     // Log full payload for traceability
     console.log("📋 Sales Quote Payload:", JSON.stringify(payload, null, 2));
-    console.log('complete payload',payload)
+    console.log("complete payload", payload);
+
     // ---- Header-level data ----
     const headerInfo = {
       salesQuoteNo: payload.salesQuoteNo,
-      opportunityNo: payload.opportunityNo,
       customerNo: payload.customerNo,
-      currency: payload.currency,
-      quoteDate: payload.quoteDate,
-      validUntil: payload.validUntil,
+      customerName: payload.customerName,
+      opportunityNo: payload.opportunityNo,
       accountManager: payload.accountManager,
+      currencyCode: payload.currencyCode,
+      quoteValidUntil: payload.quoteValidUntil,
+      totalAmount: payload.totalAmount,
+      createdAt: payload.createdAt,
     };
 
     console.log("🧾 Sales Quote Header:", headerInfo);
@@ -98,23 +99,36 @@ app.post("/sales-quote-webhook", async (req, res) => {
           unitCost: line.unitCost,
           unitPrice: line.unitPrice,
 
-          // Margin
+          // Margin & amount
           marginPercent: line.marginPercent,
+          lineAmount: line.lineAmount,
 
-          // Traceability back to RFQ
+          // Traceability back to purchase quote and opportunity
           purchaseQuoteNo: line.purchaseQuoteNo,
-          rfqApprovalEntryNo: line.rfqApprovalEntryNo,
+          oppNo: line.oppNo,
+
+          // Order conversion flag
+          convertToOrder: line.convertToOrder,
         });
       });
     }
 
-    // ---- Marketplace sync logic (example) ----
-    /*
-      await marketplaceService.upsertQuote({
-        header: headerInfo,
-        lines: payload.lines
-      });
-    */
+    await producer.add(
+      "pg-events",
+      {
+        model: "CustomerQuote",
+        operation: "create_from_sales_quote",
+        payload: {
+          header: headerInfo,
+          lines: payload.lines,
+        },
+      },
+      {
+        jobId: `customer-quote-${headerInfo.salesQuoteNo}`,
+        removeOnComplete: true,
+        removeOnFail: false,
+      }
+    );
 
     res.status(200).json({
       status: "success",
@@ -128,8 +142,6 @@ app.post("/sales-quote-webhook", async (req, res) => {
     });
   }
 });
-
-
 
 // Microsoft Graph webhook endpoint for email notifications
 // GET endpoint for subscription validation
