@@ -143,6 +143,133 @@ app.post("/sales-quote-webhook", async (req, res) => {
   }
 });
 
+app.post("/vendor-quote-approval-webhook", async (req, res) => {
+  try {
+    console.log("📥 Vendor Quote Approval webhook received");
+    const payload = req.body;
+
+    // Log full payload for traceability
+    console.log("📋 Vendor Quote Approval Payload:", JSON.stringify(payload, null, 2));
+    console.log("complete payload", payload);
+
+    // ---- Vendor Quote Approval Data ----
+    const vendorQuoteInfo = {
+      // RFQ Information
+      mpRfqId: payload.mpRfqId,
+      rfqLineNo: payload.rfqLineNo,
+      
+      // Vendor Information
+      vendorNo: payload.vendorNo,
+      vendorName: payload.vendorName,
+      
+      // Approval Status
+      approvalStatus: payload.approvalStatus,
+      approvedBy: payload.approvedBy,
+      approvedDate: payload.approvedDate,
+      
+      // Pricing Information
+      unitCost: payload.unitCost,
+      currencyCode: payload.currencyCode,
+      suggestedMargin: payload.suggestedMargin,
+      amMargin: payload.amMargin,
+      finalUnitPrice: payload.finalUnitPrice,
+      
+      // Quote Details
+      leadTimeDays: payload.leadTimeDays,
+      moq: payload.moq,
+      validTillDate: payload.validTillDate,
+      quotedUomCode: payload.quotedUomCode,
+      quoteSource: payload.quoteSource,
+      
+      // References
+      vendorQuoteReference: payload.vendorQuoteReference,
+      systemId: payload.systemId,
+    };
+
+    console.log("✅ Vendor Quote Details:", vendorQuoteInfo);
+
+    // Log key business information
+    console.log("💰 Pricing Breakdown:", {
+      unitCost: vendorQuoteInfo.unitCost,
+      amMargin: `${vendorQuoteInfo.amMargin}%`,
+      finalUnitPrice: vendorQuoteInfo.finalUnitPrice,
+      currency: vendorQuoteInfo.currencyCode,
+    });
+
+    console.log("📦 Logistics:", {
+      leadTime: `${vendorQuoteInfo.leadTimeDays} days`,
+      moq: vendorQuoteInfo.moq,
+      validUntil: vendorQuoteInfo.validTillDate,
+    });
+
+    console.log("👤 Approval Info:", {
+      status: vendorQuoteInfo.approvalStatus,
+      approvedBy: vendorQuoteInfo.approvedBy,
+      approvedDate: vendorQuoteInfo.approvedDate,
+    });
+
+    // Validate required fields
+    if (!payload.mpRfqId || !payload.rfqLineNo || !payload.vendorNo) {
+      console.warn("⚠️ Missing required fields in vendor quote webhook");
+      return res.status(400).json({
+        error: "Missing required fields (mpRfqId, rfqLineNo, vendorNo)",
+      });
+    }
+
+    // Check approval status
+    // if (payload.approvalStatus === "Approved") {
+    //   console.log("✅ Vendor quote APPROVED");
+      
+    //   // Add to queue for processing
+    //   await producer.add(
+    //     "pg-events",
+    //     {
+    //       model: "VendorQuoteApproval",
+    //       operation: "process_approval",
+    //       payload: vendorQuoteInfo,
+    //     },
+    //     {
+    //       jobId: `vendor-quote-${payload.mpRfqId}-${payload.rfqLineNo}-${payload.vendorNo}`,
+    //       removeOnComplete: true,
+    //       removeOnFail: false,
+    //     }
+    //   );
+    // } else if (payload.approvalStatus === "Rejected") {
+    //   console.log("❌ Vendor quote REJECTED");
+      
+    //   // Handle rejection
+    //   await producer.add(
+    //     "pg-events",
+    //     {
+    //       model: "VendorQuoteApproval",
+    //       operation: "process_rejection",
+    //       payload: vendorQuoteInfo,
+    //     },
+    //     {
+    //       jobId: `vendor-quote-reject-${payload.mpRfqId}-${payload.rfqLineNo}-${payload.vendorNo}`,
+    //       removeOnComplete: true,
+    //       removeOnFail: false,
+    //     }
+    //   );
+    // }
+
+    res.status(200).json({
+      status: "success",
+      message: "Vendor quote approval received and processed",
+      mpRfqId: payload.mpRfqId,
+      rfqLineNo: payload.rfqLineNo,
+      vendorNo: payload.vendorNo,
+      approvalStatus: payload.approvalStatus,
+    });
+  } catch (err) {
+    console.error("❌ Failed to handle Vendor Quote Approval webhook:", err);
+    res.status(500).json({
+      error: "Failed to handle Vendor Quote Approval webhook",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
 // Microsoft Graph webhook endpoint for email notifications
 // GET endpoint for subscription validation
 app.get("/graph/webhook", (req, res) => {
