@@ -2,7 +2,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
 dotenv.config();
-import { producer } from "./queue";
+import { producer, rfqQueue } from "./queue";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -150,112 +150,70 @@ app.post("/vendor-quote-approval-webhook", async (req, res) => {
 
     // Log full payload for traceability
     console.log("📋 Vendor Quote Approval Payload:", JSON.stringify(payload, null, 2));
-    console.log("complete payload", payload);
-
-    // ---- Vendor Quote Approval Data ----
-    const vendorQuoteInfo = {
-      // RFQ Information
-      mpRfqId: payload.mpRfqId,
-      rfqLineNo: payload.rfqLineNo,
-      
-      // Vendor Information
-      vendorNo: payload.vendorNo,
-      vendorName: payload.vendorName,
-      
-      // Approval Status
-      approvalStatus: payload.approvalStatus,
-      approvedBy: payload.approvedBy,
-      approvedDate: payload.approvedDate,
-      
-      // Pricing Information
-      unitCost: payload.unitCost,
-      currencyCode: payload.currencyCode,
-      suggestedMargin: payload.suggestedMargin,
-      amMargin: payload.amMargin,
-      finalUnitPrice: payload.finalUnitPrice,
-      
-      // Quote Details
-      leadTimeDays: payload.leadTimeDays,
-      moq: payload.moq,
-      validTillDate: payload.validTillDate,
-      quotedUomCode: payload.quotedUomCode,
-      quoteSource: payload.quoteSource,
-      
-      // References
-      vendorQuoteReference: payload.vendorQuoteReference,
-      systemId: payload.systemId,
-    };
-
-    console.log("✅ Vendor Quote Details:", vendorQuoteInfo);
-
-    // Log key business information
-    console.log("💰 Pricing Breakdown:", {
-      unitCost: vendorQuoteInfo.unitCost,
-      amMargin: `${vendorQuoteInfo.amMargin}%`,
-      finalUnitPrice: vendorQuoteInfo.finalUnitPrice,
-      currency: vendorQuoteInfo.currencyCode,
-    });
-
-    console.log("📦 Logistics:", {
-      leadTime: `${vendorQuoteInfo.leadTimeDays} days`,
-      moq: vendorQuoteInfo.moq,
-      validUntil: vendorQuoteInfo.validTillDate,
-    });
-
-    console.log("👤 Approval Info:", {
-      status: vendorQuoteInfo.approvalStatus,
-      approvedBy: vendorQuoteInfo.approvedBy,
-      approvedDate: vendorQuoteInfo.approvedDate,
-    });
 
     // Validate required fields
-    if (!payload.mpRfqId || !payload.rfqLineNo || !payload.vendorNo) {
+    if (!payload.mpRfqId || !payload.rfqLineNo || !payload.vendorNo || !payload.systemId) {
       console.warn("⚠️ Missing required fields in vendor quote webhook");
       return res.status(400).json({
-        error: "Missing required fields (mpRfqId, rfqLineNo, vendorNo)",
+        error: "Missing required fields (mpRfqId, rfqLineNo, vendorNo, systemId)",
       });
     }
 
-    // Check approval status
-    // if (payload.approvalStatus === "Approved") {
-    //   console.log("✅ Vendor quote APPROVED");
-      
-    //   // Add to queue for processing
-    //   await producer.add(
-    //     "pg-events",
-    //     {
-    //       model: "VendorQuoteApproval",
-    //       operation: "process_approval",
-    //       payload: vendorQuoteInfo,
-    //     },
-    //     {
-    //       jobId: `vendor-quote-${payload.mpRfqId}-${payload.rfqLineNo}-${payload.vendorNo}`,
-    //       removeOnComplete: true,
-    //       removeOnFail: false,
-    //     }
-    //   );
-    // } else if (payload.approvalStatus === "Rejected") {
-    //   console.log("❌ Vendor quote REJECTED");
-      
-    //   // Handle rejection
-    //   await producer.add(
-    //     "pg-events",
-    //     {
-    //       model: "VendorQuoteApproval",
-    //       operation: "process_rejection",
-    //       payload: vendorQuoteInfo,
-    //     },
-    //     {
-    //       jobId: `vendor-quote-reject-${payload.mpRfqId}-${payload.rfqLineNo}-${payload.vendorNo}`,
-    //       removeOnComplete: true,
-    //       removeOnFail: false,
-    //     }
-    //   );
-    // }
+    // Prepare webhook data matching QuoteApprovalJobData interface
+    const webhookData = {
+      mpRfqId: payload.mpRfqId,
+      rfqLineNo: payload.rfqLineNo,
+      vendorNo: payload.vendorNo,
+      vendorName: payload.vendorName,
+      unitCost: payload.unitCost,
+      currencyCode: payload.currencyCode,
+      leadTimeDays: payload.leadTimeDays,
+      moq: payload.moq,
+      validTillDate: payload.validTillDate,
+      quoteSource: payload.quoteSource,
+      suggestedMargin: payload.suggestedMargin,
+      amMargin: payload.amMargin,
+      quotedUomCode: payload.quotedUomCode,
+      finalUnitPrice: payload.finalUnitPrice,
+      approvalStatus: payload.approvalStatus,
+      approvedBy: payload.approvedBy,
+      approvedDate: payload.approvedDate,
+      vendorQuoteReference: payload.vendorQuoteReference,
+      systemId: payload.systemId, // This matches VendorQuote.erpRef
+    };
+
+    console.log("✅ Vendor Quote Approval Data:", {
+      systemId: webhookData.systemId,
+      approvalStatus: webhookData.approvalStatus,
+      mpRfqId: webhookData.mpRfqId,
+    });
+
+    // Enqueue quote approval job
+    // The sync processor will:
+    // 1. Find VendorQuote by erpRef (systemId)
+    // 2. Update approval status
+    // 3. Update RFQ line and RFQ statuses
+    await rfqQueue.add(
+      "rfq.quote.approval",
+      {
+        webhookData,
+      },
+      {
+        jobId: `quote-approval-${payload.systemId}`, // Prevents duplicates
+        removeOnComplete: {
+          age: 24 * 3600,
+          count: 500,
+        },
+      }
+    );
+
+    console.log(
+      `🚀 Enqueued rfq.quote.approval job for systemId: ${payload.systemId}`
+    );
 
     res.status(200).json({
       status: "success",
-      message: "Vendor quote approval received and processed",
+      message: "Vendor quote approval received and enqueued",
       mpRfqId: payload.mpRfqId,
       rfqLineNo: payload.rfqLineNo,
       vendorNo: payload.vendorNo,
@@ -285,11 +243,11 @@ app.get("/graph/webhook", (req, res) => {
 });
 
 // POST endpoint for receiving email notifications from Microsoft Graph
+// POST endpoint for receiving email notifications from Microsoft Graph
 app.post("/graph/webhook", async (req, res) => {
   try {
     console.log("📥 POST /graph/webhook received");
     console.log("📋 Content-Type:", req.headers["content-type"]);
-    console.log("📋 Body:", req.body);
 
     // 1️⃣ Subscription validation handling
     const validationToken = req.query.validationToken as string;
@@ -336,31 +294,48 @@ app.post("/graph/webhook", async (req, res) => {
         changeType === "created" &&
         resource?.toLowerCase().includes("/messages/")
       ) {
+        const messageId = resourceData?.id;
+        
+        if (!messageId) {
+          console.warn("⚠️ Message ID missing in notification");
+          continue;
+        }
+
         console.log(
-          "📨 Email detected — enqueuing job to process vendor reply"
+          `📨 Email detected (messageId: ${messageId}) — enqueuing quote ingestion job`
         );
 
-        await producer.add(
-          "email.vendor_reply",
-          {
-            model: "Email",
-            operation: "vendor_reply",
-            payload: {
-              messageId: resourceData?.id,
-              resource,
-              subscriptionId,
+        try {
+          // Enqueue quote ingestion job with messageId
+          // The sync processor will:
+          // 1. Fetch email from Graph using messageId
+          // 2. Extract responseToken from email
+          // 3. Find VendorRfq by responseToken or email
+          // 4. Process the quote
+          await rfqQueue.add(
+            "rfq.quote.ingestion",
+            {
+              messageId, // Processor will fetch email and find VendorRfq
             },
-          },
-          {
-            jobId: `email-${resourceData?.id}`, // prevents duplicates
-            removeOnComplete: true,
-            removeOnFail: false,
-          }
-        );
+            {
+              jobId: `quote-ingestion-${messageId}`, // Prevents duplicates
+              removeOnComplete: {
+                age: 24 * 3600,
+                count: 500,
+              },
+            }
+          );
 
-        console.log(
-          `🚀 Job enqueued → process-email-reply for message ${resourceData?.id}`
-        );
+          console.log(
+            `🚀 Enqueued rfq.quote.ingestion job for messageId: ${messageId}`
+          );
+        } catch (error: any) {
+          console.error(
+            `❌ Failed to enqueue quote ingestion job for messageId ${messageId}:`,
+            error?.message || error
+          );
+          // Continue processing other notifications
+        }
       } else {
         console.log(
           `ℹ️ Ignored — changeType: ${changeType}, resource: ${resource}`
