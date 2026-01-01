@@ -309,11 +309,12 @@ app.post("/graph/webhook", async (req, res) => {
           // Enqueue quote ingestion job with messageId
           // The sync processor will:
           // 1. Fetch email from Graph using messageId
-          // 2. Extract responseToken from email
-          // 3. Find VendorRfq by responseToken or email
-          // 4. Process the quote
+          // 2. Parse email using AI to extract responseToken and quote data
+          // 3. Find VendorRfq by responseToken
+          // 4. Create VendorQuote if classification is QUOTE
+          // 5. Enqueue vendor quote sync job to sync to BC
           await rfqQueue.add(
-            "rfq.quote.ingestion",
+            "rfq.quote-ingestion", // Updated: use hyphen instead of dots to match sync service
             {
               messageId, // Processor will fetch email and find VendorRfq
             },
@@ -327,7 +328,7 @@ app.post("/graph/webhook", async (req, res) => {
           );
 
           console.log(
-            `🚀 Enqueued rfq.quote.ingestion job for messageId: ${messageId}`
+            `🚀 Enqueued rfq.quote-ingestion job for messageId: ${messageId}`
           );
         } catch (error: any) {
           console.error(
