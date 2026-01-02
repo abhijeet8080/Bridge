@@ -66,79 +66,90 @@ app.post("/sales-quote-webhook", async (req, res) => {
 
     // Log full payload for traceability
     console.log("📋 Sales Quote Payload:", JSON.stringify(payload, null, 2));
-    console.log("complete payload", payload);
 
-    // ---- Header-level data ----
-    const headerInfo = {
-      salesQuoteNo: payload.salesQuoteNo,
-      customerNo: payload.customerNo,
-      customerName: payload.customerName,
-      opportunityNo: payload.opportunityNo,
-      accountManager: payload.accountManager,
-      currencyCode: payload.currencyCode,
-      quoteValidUntil: payload.quoteValidUntil,
-      totalAmount: payload.totalAmount,
-      createdAt: payload.createdAt,
-    };
-
-    console.log("🧾 Sales Quote Header:", headerInfo);
-
-    // ---- Line-level data ----
-    if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
-      console.warn("⚠️ Sales quote has no lines");
-    } else {
-      payload.lines.forEach((line: any) => {
-        console.log("📦 Sales Quote Line:", {
-          lineNo: line.lineNo,
-          itemNo: line.itemNo,
-          internalItemId: line.internalItemId,
-          description: line.description,
-          quantity: line.quantity,
-
-          // Cost & price
-          unitCost: line.unitCost,
-          unitPrice: line.unitPrice,
-
-          // Margin & amount
-          marginPercent: line.marginPercent,
-          lineAmount: line.lineAmount,
-
-          // Traceability back to purchase quote and opportunity
-          purchaseQuoteNo: line.purchaseQuoteNo,
-          oppNo: line.oppNo,
-
-          // Order conversion flag
-          convertToOrder: line.convertToOrder,
-        });
+    // Validate required fields
+    if (!payload.salesQuoteNo || !payload.opportunityNo) {
+      console.warn("⚠️ Missing required fields: salesQuoteNo or opportunityNo");
+      return res.status(400).json({
+        error: "Missing required fields (salesQuoteNo, opportunityNo)",
       });
     }
 
-    await producer.add(
-      "pg-events",
+    if (!Array.isArray(payload.lines) || payload.lines.length === 0) {
+      console.warn("⚠️ Sales quote has no lines");
+      return res.status(400).json({
+        error: "Sales quote must have at least one line",
+      });
+    }
+
+    // Transform payload to match CustomerQuoteSyncJobData interface
+    const jobData = {
+      salesQuoteNo: payload.salesQuoteNo,
+      salesQuoteSystemId: payload.salesQuoteSystemId || payload.systemId || "",
+      customerNo: payload.customerNo || "",
+      customerName: payload.customerName || "",
+      opportunityNo: payload.opportunityNo,
+      accountManager: payload.accountManager || "",
+      currencyCode: payload.currencyCode || "",
+      quoteValidUntil: payload.quoteValidUntil || payload.validUntil || "",
+      validityDays: payload.validityDays || 30, // Default to 30 if not provided
+      totalAmount: payload.totalAmount || 0,
+      issuedAt: payload.issuedAt || payload.createdAt || new Date().toISOString(),
+      lines: payload.lines.map((line: any) => ({
+        lineNo: line.lineNo,
+        lineSystemId: line.lineSystemId || line.systemId || "",
+        itemNo: line.itemNo || "",
+        internalItemId: line.internalItemId || line.itemNo || "",
+        description: line.description || "",
+        quantity: line.quantity || 0,
+        unitCost: line.unitCost || 0,
+        unitPrice: line.unitPrice || 0,
+        marginPercent: line.marginPercent || 0,
+        lineAmount: line.lineAmount || line.unitPrice * (line.quantity || 0),
+        purchaseQuoteNo: line.purchaseQuoteNo || "",
+        oppNo: line.oppNo || payload.opportunityNo,
+        convertToOrder: line.convertToOrder !== undefined ? line.convertToOrder : true,
+      })),
+    };
+
+    console.log("🧾 Customer Quote Sync Job Data:", {
+      salesQuoteNo: jobData.salesQuoteNo,
+      opportunityNo: jobData.opportunityNo,
+      linesCount: jobData.lines.length,
+    });
+
+    // Enqueue customer quote sync job to RFQ queue
+    await rfqQueue.add(
+      "rfq.customer-quote-sync",
+      jobData,
       {
-        model: "CustomerQuote",
-        operation: "create_from_sales_quote",
-        payload: {
-          header: headerInfo,
-          lines: payload.lines,
+        jobId: `customer-quote-sync-${jobData.salesQuoteNo}`, // Prevents duplicates
+        removeOnComplete: {
+          age: 24 * 3600, // Keep completed jobs for 24 hours
+          count: 500,
         },
-      },
-      {
-        jobId: `customer-quote-${headerInfo.salesQuoteNo}`,
-        removeOnComplete: true,
-        removeOnFail: false,
+        removeOnFail: {
+          age: 7 * 24 * 3600, // Keep failed jobs for 7 days
+          count: 500,
+        },
       }
+    );
+
+    console.log(
+      `🚀 Enqueued rfq.customer-quote-sync job for Sales Quote: ${jobData.salesQuoteNo}`
     );
 
     res.status(200).json({
       status: "success",
-      message: "Sales quote received and processed",
+      message: "Sales quote received and enqueued for processing",
       salesQuoteNo: payload.salesQuoteNo,
+      opportunityNo: payload.opportunityNo,
     });
   } catch (err) {
     console.error("❌ Failed to handle Sales Quote webhook:", err);
     res.status(500).json({
       error: "Failed to handle Sales Quote webhook",
+      message: err instanceof Error ? err.message : String(err),
     });
   }
 });
