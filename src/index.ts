@@ -371,6 +371,114 @@ app.get("/health", async (_req, res) => {
   }
 });
 
+// Add this endpoint to your index.ts file
+
+// Test endpoint for BC → Marketplace: Send conversation message
+app.post("/marketplace/conversations/:conversationId/messages", async (req, res) => {
+  try {
+    console.log("📥 BC → Marketplace: Conversation message received");
+    
+    const conversationId = req.params.conversationId;
+    const payload = req.body;
+
+    // Log full payload for debugging
+    console.log("📋 Conversation Message Payload:", JSON.stringify({
+      conversationId,
+      ...payload
+    }, null, 2));
+
+    // Validate required fields based on BC contract
+    if (!payload.subject && !payload.body) {
+      console.warn("⚠️ Missing required fields: subject or body");
+      return res.status(400).json({
+        error: "Missing required fields (subject or body)",
+      });
+    }
+
+    // Log message details
+    console.log("💬 Message Details:", {
+      conversationId,
+      messageId: payload.messageId || "N/A",
+      direction: payload.direction,
+      type: payload.type,
+      senderType: payload.sender?.type,
+      senderName: payload.sender?.name,
+      subject: payload.subject,
+      bodyLength: payload.body?.length || 0,
+      isInternalNote: payload.isInternalNote,
+      createdAt: payload.createdAt,
+    });
+
+    // Optional: Enqueue job for processing in marketplace
+    // Uncomment if you want to process this asynchronously
+    /*
+    await rfqQueue.add(
+      "marketplace.conversation-message",
+      {
+        conversationId,
+        message: payload,
+      },
+      {
+        jobId: `conv-message-${conversationId}-${payload.messageId || Date.now()}`,
+        removeOnComplete: {
+          age: 24 * 3600,
+          count: 500,
+        },
+      }
+    );
+    console.log(`🚀 Enqueued marketplace.conversation-message job for conversation: ${conversationId}`);
+    */
+
+    // Return success response matching BC's expected format
+    res.status(200).json({
+      status: "ok",
+      messageId: payload.messageId || `mkt-${Date.now()}`, // Return marketplace messageId if BC sent one, or generate one
+      conversationId: conversationId,
+    });
+  } catch (err) {
+    console.error("❌ Failed to handle BC → Marketplace conversation message:", err);
+    res.status(500).json({
+      error: "Failed to handle conversation message",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+// Optional: Endpoint to update conversation status/owner (PATCH)
+app.patch("/marketplace/conversations/:conversationId", async (req, res) => {
+  try {
+    console.log("📥 BC → Marketplace: Conversation update received");
+    
+    const conversationId = req.params.conversationId;
+    const payload = req.body;
+
+    console.log("📋 Conversation Update Payload:", JSON.stringify({
+      conversationId,
+      ...payload
+    }, null, 2));
+
+    console.log("🔄 Update Details:", {
+      conversationId,
+      status: payload.status,
+      ownerSalespersonCode: payload.ownerSalespersonCode,
+      lastActivityAt: payload.lastActivityAt,
+    });
+
+    // Return success response
+    res.status(200).json({
+      status: "ok",
+      conversationId: conversationId,
+    });
+  } catch (err) {
+    console.error("❌ Failed to handle conversation update:", err);
+    res.status(500).json({
+      error: "Failed to handle conversation update",
+      message: err instanceof Error ? err.message : String(err),
+    });
+  }
+});
+
+
 app.listen(PORT, () => {
   console.log(`🚀 HTTP Service listening on http://localhost:${PORT}`);
 });
