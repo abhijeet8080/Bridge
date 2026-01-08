@@ -2,7 +2,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import dotenv from "dotenv";
 dotenv.config();
-import { producer, rfqQueue } from "./queue";
+import { producer, rfqQueue, conversationQueue } from "./queue";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -374,6 +374,7 @@ app.get("/health", async (_req, res) => {
 // Add this endpoint to your index.ts file
 
 // Test endpoint for BC → Marketplace: Send conversation message
+// BC → Marketplace: Send conversation message
 app.post("/marketplace/conversations/:conversationId/messages", async (req, res) => {
   try {
     console.log("📥 BC → Marketplace: Conversation message received");
@@ -388,10 +389,10 @@ app.post("/marketplace/conversations/:conversationId/messages", async (req, res)
     }, null, 2));
 
     // Validate required fields based on BC contract
-    if (!payload.subject && !payload.body) {
-      console.warn("⚠️ Missing required fields: subject or body");
+    if (!payload.body) {
+      console.warn("⚠️ Missing required field: body");
       return res.status(400).json({
-        error: "Missing required fields (subject or body)",
+        error: "Missing required field: body",
       });
     }
 
@@ -403,31 +404,51 @@ app.post("/marketplace/conversations/:conversationId/messages", async (req, res)
       type: payload.type,
       senderType: payload.sender?.type,
       senderName: payload.sender?.name,
-      subject: payload.subject,
       bodyLength: payload.body?.length || 0,
       isInternalNote: payload.isInternalNote,
       createdAt: payload.createdAt,
     });
 
-    // Optional: Enqueue job for processing in marketplace
-    // Uncomment if you want to process this asynchronously
-    /*
-    await rfqQueue.add(
-      "marketplace.conversation-message",
+    // Enqueue job to sync BC message to backend
+    await conversationQueue.add(
+      "conversation.bc-to-backend-sync",
       {
-        conversationId,
-        message: payload,
+        bcConversationId: conversationId, // BC's conversation ID
+        message: {
+          messageId: payload.messageId,
+          messageNo: payload.messageNo,
+          source: payload.source || "Portal",
+          direction: payload.direction || "Outbound",
+          type: payload.type || "Reply",
+          sender: {
+            type: payload.sender?.type || "AM",
+            no: payload.sender?.no,
+            name: payload.sender?.name,
+            email: payload.sender?.email,
+          },
+          intent: payload.intent,
+          body: payload.body,
+          isInternalNote: payload.isInternalNote || false,
+          isRead: payload.isRead || false,
+          createdAt: payload.createdAt || new Date().toISOString(),
+        },
+        // Optional: Include conversation context if BC sends it
+        conversation: payload.conversation || undefined,
       },
       {
-        jobId: `conv-message-${conversationId}-${payload.messageId || Date.now()}`,
+        jobId: `bc-to-backend-conv-${conversationId}-${payload.messageId || Date.now()}`, // Prevents duplicates
         removeOnComplete: {
           age: 24 * 3600,
           count: 500,
         },
+        removeOnFail: {
+          age: 7 * 24 * 3600,
+          count: 500,
+        },
       }
     );
-    console.log(`🚀 Enqueued marketplace.conversation-message job for conversation: ${conversationId}`);
-    */
+
+    console.log(`🚀 Enqueued conversation.bc-to-backend-sync job for conversation: ${conversationId}`);
 
     // Return success response matching BC's expected format
     res.status(200).json({
